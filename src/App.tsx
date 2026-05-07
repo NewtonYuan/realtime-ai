@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type VoiceCallEvent,
   type VoiceCallStatus,
@@ -27,6 +27,13 @@ function formatElapsedTime(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
+type TranscriptItem = {
+  id: string;
+  speaker: "system" | "user" | "assistant" | "error";
+  text: string;
+  isFinal: boolean;
+};
+
 function App() {
   const [status, setStatus] = useState<VoiceCallStatus>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -34,8 +41,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [lastEvent, setLastEvent] = useState<VoiceCallEvent | null>(null);
+  const [realtimeVoice, setRealtimeVoice] = useState(voiceCallService.getVoice());
+  const [transcriptItems, setTranscriptItems] = useState<TranscriptItem[]>([]);
 
   const isConnected = status === "connected";
+  const lastEventMessage =
+    lastEvent?.type === "status" || lastEvent?.type === "event" || lastEvent?.type === "error"
+      ? lastEvent.message
+      : lastEvent?.type === "transcript"
+        ? `${lastEvent.speaker === "user" ? "You" : "Assistant"}: ${lastEvent.text}`
+        : "No realtime events yet.";
 
   useEffect(() => {
     if (!isConnected) {
@@ -67,42 +82,86 @@ function App() {
           setIsBusy(false);
           setIsMuted(false);
         }
+
+        appendTranscriptItem({
+          id: `status-${Date.now()}-${event.status}`,
+          speaker: "system",
+          text: event.message,
+          isFinal: true,
+        });
       }
 
       if (event.type === "error") {
         setError(event.message);
         setIsBusy(false);
         setStatus("idle");
+        appendTranscriptItem({
+          id: `error-${Date.now()}`,
+          speaker: "error",
+          text: event.message,
+          isFinal: true,
+        });
+      }
+
+      if (event.type === "event") {
+        appendTranscriptItem({
+          id: `event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          speaker: "system",
+          text: event.message,
+          isFinal: true,
+        });
+      }
+
+      if (event.type === "transcript") {
+        setTranscriptItems((currentItems) => {
+          const existingIndex = currentItems.findIndex(
+            (item) => item.id === event.entryId,
+          );
+
+          if (existingIndex === -1) {
+            return [
+              ...currentItems,
+              {
+                id: event.entryId,
+                speaker: event.speaker,
+                text: event.text,
+                isFinal: event.isFinal,
+              },
+            ];
+          }
+
+          return currentItems.map((item) =>
+            item.id === event.entryId
+              ? {
+                  ...item,
+                  text: event.text,
+                  isFinal: event.isFinal,
+                }
+              : item,
+          );
+        });
       }
     });
 
     return unsubscribe;
   }, []);
 
-  const statusMessage = useMemo(() => {
-    if (status === "requesting-microphone") {
-      return "Approve microphone access in your browser to continue.";
-    }
-
-    if (status === "connecting") {
-      return "Creating the OpenAI Realtime session and completing the WebRTC handshake.";
-    }
-
-    if (status === "connected") {
-      return "The microphone and Realtime connection are active. Start speaking after the connection settles.";
-    }
-
-    if (status === "ending") {
-      return "Ending the call and cleaning up the peer connection and microphone stream.";
-    }
-
-    return "Start a call to request microphone access and connect the browser to OpenAI Realtime.";
-  }, [status]);
+  function appendTranscriptItem(item: TranscriptItem) {
+    setTranscriptItems((currentItems) => [...currentItems, item]);
+  }
 
   async function handleStartCall() {
     setError(null);
     setLastEvent(null);
     setIsBusy(true);
+    setTranscriptItems([
+      {
+        id: "system-start",
+        speaker: "system",
+        text: "Starting a new call.",
+        isFinal: true,
+      },
+    ]);
 
     try {
       await voiceCallService.startCall({
@@ -111,6 +170,7 @@ function App() {
       });
       setStatus("connected");
       setIsMuted(voiceCallService.isMuted());
+      setRealtimeVoice(voiceCallService.getVoice());
       setElapsedSeconds(0);
     } catch (serviceError) {
       setStatus("idle");
@@ -160,66 +220,94 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="call-card">
-        <div className="card-header">
-          <div>
-            <p className="eyebrow">Realtime UI Starter</p>
-            <h1>AI Voice Call</h1>
+      <section className="app-grid">
+        <div className="call-card">
+          <div className="details-grid">
+            <div className="detail-panel">
+              <span className="detail-label">Call status</span>
+              <strong>{statusLabels[status]}</strong>
+            </div>
+            <div className="detail-panel">
+              <span className="detail-label">Elapsed time</span>
+              <strong>{formatElapsedTime(elapsedSeconds)}</strong>
+            </div>
+            <div className="detail-panel">
+              <span className="detail-label">Realtime voice</span>
+              <strong>{realtimeVoice}</strong>
+            </div>
           </div>
-          <span className={`status-pill status-${status}`}>{statusLabels[status]}</span>
-        </div>
 
-        <p className="supporting-text">{statusMessage}</p>
-
-        <div className="details-grid">
-          <div className="detail-panel">
-            <span className="detail-label">Call status</span>
-            <strong>{statusLabels[status]}</strong>
+          <div className="detail-panel event-panel">
+            <span className="detail-label">Connection details</span>
+            <strong>{lastEventMessage}</strong>
+            <span className="detail-caption">Model: {realtimeModel}</span>
           </div>
-          <div className="detail-panel">
-            <span className="detail-label">Elapsed time</span>
-            <strong>{formatElapsedTime(elapsedSeconds)}</strong>
-          </div>
-        </div>
 
-        <div className="detail-panel event-panel">
-          <span className="detail-label">Connection details</span>
-          <strong>{lastEvent?.message ?? "No realtime events yet."}</strong>
-          <span className="detail-caption">Model: {realtimeModel}</span>
-        </div>
+          {error ? <div className="feedback error">{error}</div> : null}
+          {isBusy ? <div className="feedback loading">Updating call state...</div> : null}
 
-        {error ? <div className="feedback error">{error}</div> : null}
-        {isBusy ? <div className="feedback loading">Updating call state...</div> : null}
-
-        <div className="controls">
-          <button
-            className="primary-button"
-            onClick={handleStartCall}
-            disabled={isConnected || isBusy}
-            type="button"
-          >
-            {status === "connecting" ? "Starting..." : "Start Voice Call"}
-          </button>
-
-          <div className="secondary-controls">
+          <div className="controls">
             <button
-              className="secondary-button"
-              onClick={handleToggleMute}
-              disabled={!isConnected || isBusy}
+              className="primary-button"
+              onClick={handleStartCall}
+              disabled={isConnected || isBusy}
               type="button"
             >
-              {isMuted ? "Unmute Microphone" : "Mute Microphone"}
+              {status === "connecting" ? "Starting..." : "Start Voice Call"}
             </button>
-            <button
-              className="danger-button"
-              onClick={handleEndCall}
-              disabled={!isConnected || isBusy}
-              type="button"
-            >
-              End Call
-            </button>
+
+            <div className="secondary-controls">
+              <button
+                className="secondary-button"
+                onClick={handleToggleMute}
+                disabled={!isConnected || isBusy}
+                type="button"
+              >
+                {isMuted ? "Unmute Microphone" : "Mute Microphone"}
+              </button>
+              <button
+                className="danger-button"
+                onClick={handleEndCall}
+                disabled={!isConnected || isBusy}
+                type="button"
+              >
+                End Call
+              </button>
+            </div>
           </div>
+
         </div>
+
+        <aside className="call-card transcript-card">
+          <div className="card-header transcript-header">
+            <div>
+              <h2>Transcript</h2>
+            </div>
+          </div>
+
+          <div className="transcript-list" aria-live="polite">
+            {transcriptItems.map((item) => (
+              <article
+                key={item.id}
+                className={`transcript-item transcript-${item.speaker}`}
+              >
+                <span className="transcript-speaker">
+                  {item.speaker === "system"
+                    ? "System"
+                    : item.speaker === "error"
+                      ? "Error"
+                      : item.speaker === "user"
+                        ? "You"
+                        : "Assistant"}
+                </span>
+                <p>{item.text}</p>
+                {!item.isFinal ? (
+                  <span className="transcript-state">In progress</span>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </aside>
       </section>
     </main>
   );

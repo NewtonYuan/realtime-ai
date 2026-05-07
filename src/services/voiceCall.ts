@@ -8,6 +8,13 @@ export type VoiceCallStatus =
 export type VoiceCallEvent =
   | { type: "status"; status: VoiceCallStatus; message: string }
   | { type: "event"; message: string }
+  | {
+      type: "transcript";
+      entryId: string;
+      speaker: "user" | "assistant";
+      text: string;
+      isFinal: boolean;
+    }
   | { type: "error"; message: string };
 
 type Subscriber = (event: VoiceCallEvent) => void;
@@ -20,6 +27,7 @@ type StartCallOptions = {
 type ClientSecretResponse = {
   value: string;
   expires_at?: number;
+  voice?: string;
 };
 
 class VoiceCallService {
@@ -33,7 +41,14 @@ class VoiceCallService {
 
   private status: VoiceCallStatus = "idle";
 
+  private voice = "marin";
+
   private subscribers = new Set<Subscriber>();
+
+  private transcriptEntries = new Map<
+    string,
+    { speaker: "user" | "assistant"; text: string; isFinal: boolean }
+  >();
 
   subscribe(subscriber: Subscriber): () => void {
     this.subscribers.add(subscriber);
@@ -58,6 +73,7 @@ class VoiceCallService {
     );
 
     try {
+      this.transcriptEntries.clear();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.mediaStream = stream;
 
@@ -66,7 +82,8 @@ class VoiceCallService {
         "Microphone ready. Creating the Realtime session.",
       );
 
-      const ephemeralKey = await this.fetchClientSecret(options);
+      const clientSecret = await this.fetchClientSecret(options);
+      this.voice = clientSecret.voice;
       const peerConnection = new RTCPeerConnection();
       this.peerConnection = peerConnection;
 
@@ -113,17 +130,16 @@ class VoiceCallService {
         });
       });
       this.dataChannel.addEventListener("message", (event) => {
-        const parsedMessage = this.parseServerEvent(event.data);
-        this.publish({
-          type: "event",
-          message: parsedMessage,
+        const parsedEvents = this.parseServerEvent(event.data);
+        parsedEvents.forEach((parsedEvent) => {
+          this.publish(parsedEvent);
         });
       });
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
-      const answerSdp = await this.fetchSdpAnswer(ephemeralKey, offer.sdp ?? "");
+      const answerSdp = await this.fetchSdpAnswer(clientSecret.value, offer.sdp ?? "");
 
       await peerConnection.setRemoteDescription({
         type: "answer",
@@ -166,6 +182,7 @@ class VoiceCallService {
       this.mediaStream = null;
     }
 
+    this.transcriptEntries.clear();
     this.updateStatus("idle", "Voice call ended.");
   }
 
@@ -202,10 +219,14 @@ class VoiceCallService {
     return this.mediaStream;
   }
 
+  getVoice(): string {
+    return this.voice;
+  }
+
   private async fetchClientSecret({
     apiBaseUrl,
     model,
-  }: StartCallOptions): Promise<string> {
+  }: StartCallOptions): Promise<{ value: string; voice: string }> {
     const response = await fetch(`${apiBaseUrl}/api/realtime/client-secret`, {
       method: "POST",
       headers: {
@@ -226,7 +247,10 @@ class VoiceCallService {
       );
     }
 
-    return payload.value;
+    return {
+      value: payload.value,
+      voice: payload.voice?.trim() || this.voice,
+    };
   }
 
   private async fetchSdpAnswer(ephemeralKey: string, offerSdp: string): Promise<string> {
@@ -268,16 +292,151 @@ class VoiceCallService {
     });
   }
 
-  private parseServerEvent(rawEvent: string): string {
+  private parseServerEvent(rawEvent: string): VoiceCallEvent[] {
     try {
-      const parsed = JSON.parse(rawEvent) as { type?: string };
-      return parsed.type
-        ? `Realtime event: ${parsed.type}`
-        : "Received a Realtime server event.";
+      const parsed = JSON.parse(rawEvent) as RealtimeServerEvent;
+      const events: VoiceCallEvent[] = [
+        {
+          type: "event",
+          message: parsed.type
+            ? `Realtime event: ${parsed.type}`
+            : "Received a Realtime server event.",
+        },
+      ];
+      const transcriptEvent = this.extractTranscriptEvent(parsed);
+
+      if (transcriptEvent) {
+        events.push(transcriptEvent);
+      }
+
+      return events;
     } catch {
-      return "Received a Realtime server event.";
+      return [
+        {
+          type: "event",
+          message: "Received a Realtime server event.",
+        },
+      ];
     }
   }
+
+  private extractTranscriptEvent(
+    event: RealtimeServerEvent,
+  ): Extract<VoiceCallEvent, { type: "transcript" }> | null {
+    if (event.type === "conversation.item.input_audio_transcription.delta") {
+      return this.upsertTranscriptEntry({
+        entryId: event.item_id ?? "user-input",
+        speaker: "user",
+        text: event.delta ?? "",
+        isFinal: false,
+        append: true,
+      });
+    }
+
+    if (event.type === "conversation.item.input_audio_transcription.completed") {
+      return this.upsertTranscriptEntry({
+        entryId: event.item_id ?? "user-input",
+        speaker: "user",
+        text: event.transcript ?? "",
+        isFinal: true,
+        append: false,
+      });
+    }
+
+    if (event.type === "response.audio_transcript.delta") {
+      return this.upsertTranscriptEntry({
+        entryId:
+          event.item_id ?? `${event.response_id ?? "response"}:${event.output_index ?? 0}`,
+        speaker: "assistant",
+        text: event.delta ?? "",
+        isFinal: false,
+        append: true,
+      });
+    }
+
+    if (event.type === "response.audio_transcript.done") {
+      return this.upsertTranscriptEntry({
+        entryId:
+          event.item_id ?? `${event.response_id ?? "response"}:${event.output_index ?? 0}`,
+        speaker: "assistant",
+        text: event.transcript ?? "",
+        isFinal: true,
+        append: false,
+      });
+    }
+
+    if (event.type === "response.output_text.delta") {
+      return this.upsertTranscriptEntry({
+        entryId:
+          event.item_id ?? `${event.response_id ?? "response"}:${event.output_index ?? 0}`,
+        speaker: "assistant",
+        text: event.delta ?? "",
+        isFinal: false,
+        append: true,
+      });
+    }
+
+    if (event.type === "response.output_text.done") {
+      return this.upsertTranscriptEntry({
+        entryId:
+          event.item_id ?? `${event.response_id ?? "response"}:${event.output_index ?? 0}`,
+        speaker: "assistant",
+        text: event.text ?? "",
+        isFinal: true,
+        append: false,
+      });
+    }
+
+    return null;
+  }
+
+  private upsertTranscriptEntry({
+    entryId,
+    speaker,
+    text,
+    isFinal,
+    append,
+  }: {
+    entryId: string;
+    speaker: "user" | "assistant";
+    text: string;
+    isFinal: boolean;
+    append: boolean;
+  }): Extract<VoiceCallEvent, { type: "transcript" }> | null {
+    const nextText = text.trim();
+
+    if (!nextText) {
+      return null;
+    }
+
+    const existingEntry = this.transcriptEntries.get(entryId);
+    const mergedText = append && existingEntry ? `${existingEntry.text}${text}` : text;
+    const normalizedText = mergedText.trim();
+
+    this.transcriptEntries.set(entryId, {
+      speaker,
+      text: normalizedText,
+      isFinal,
+    });
+
+    return {
+      type: "transcript",
+      entryId,
+      speaker,
+      text: normalizedText,
+      isFinal,
+    };
+  }
 }
+
+type RealtimeServerEvent = {
+  type?: string;
+  item_id?: string;
+  response_id?: string;
+  output_index?: number;
+  delta?: string;
+  transcript?: string;
+  text?: string;
+};
 
 export const voiceCallService = new VoiceCallService();

@@ -1,8 +1,6 @@
 :root {
-  color: #e7ecf3;
-  background:
-    radial-gradient(circle at top, rgba(63, 94, 251, 0.22), transparent 35%),
-    linear-gradient(180deg, #08111f 0%, #111b2f 100%);
+  color: #ffffff;
+  background: #000000;
   font-family:
     "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.5;
@@ -21,6 +19,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #000000;
+  color: #ffffff;
 }
 
 button {
@@ -38,14 +38,20 @@ button {
   padding: 24px;
 }
 
+.app-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  gap: 24px;
+  width: min(100%, 980px);
+}
+
 .call-card {
-  width: min(100%, 560px);
+  width: 100%;
   padding: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid #ffffff;
   border-radius: 24px;
-  background: rgba(7, 14, 27, 0.78);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(18px);
+  background: #000000;
+  box-shadow: none;
 }
 
 .card-header {
@@ -57,7 +63,7 @@ button {
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #91a0bb;
+  color: #cfcfcf;
   font-size: 0.78rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -65,14 +71,21 @@ button {
 
 h1 {
   margin: 0;
-  color: #f7f9fc;
+  color: #ffffff;
   font-size: clamp(2rem, 4vw, 2.8rem);
   line-height: 1.05;
 }
 
+h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 1.8rem;
+  line-height: 1.1;
+}
+
 .supporting-text {
   margin: 20px 0 0;
-  color: #b8c3d9;
+  color: #e0e0e0;
   font-size: 1rem;
 }
 
@@ -82,25 +95,26 @@ h1 {
   justify-content: center;
   min-width: 98px;
   padding: 10px 14px;
+  border: 1px solid #ffffff;
   border-radius: 999px;
   font-size: 0.88rem;
   font-weight: 600;
 }
 
 .status-idle {
-  color: #d6deef;
-  background: rgba(148, 163, 184, 0.2);
+  color: #ffffff;
+  background: #111111;
 }
 
 .status-connecting,
 .status-ending {
-  color: #ffe9b0;
-  background: rgba(245, 158, 11, 0.18);
+  color: #ffffff;
+  background: #111111;
 }
 
 .status-connected {
-  color: #c3fdd6;
-  background: rgba(34, 197, 94, 0.18);
+  color: #ffffff;
+  background: #111111;
 }
 
 .details-grid {
@@ -113,14 +127,14 @@ h1 {
 .detail-panel {
   padding: 18px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0a0a0a;
+  border: 1px solid #2a2a2a;
 }
 
 .detail-label {
   display: block;
   margin-bottom: 6px;
-  color: #91a0bb;
+  color: #cfcfcf;
   font-size: 0.86rem;
 }
 
@@ -136,25 +150,26 @@ h1 {
 }
 
 .detail-caption {
-  color: #91a0bb;
+  color: #bdbdbd;
   font-size: 0.84rem;
 }
 
 .feedback {
   margin-top: 18px;
   padding: 14px 16px;
+  border: 1px solid #3a3a3a;
   border-radius: 16px;
   font-size: 0.95rem;
 }
 
 .feedback.loading {
-  color: #d9e4fb;
-  background: rgba(59, 130, 246, 0.16);
+  color: #ffffff;
+  background: #111111;
 }
 
 .feedback.error {
-  color: #ffd0d0;
-  background: rgba(239, 68, 68, 0.16);
+  color: #ffffff;
+  background: #111111;
 }
 
 .controls {
@@ -164,7 +179,7 @@ h1 {
 .primary-button,
 .secondary-button,
 .danger-button {
-  border: none;
+  border: 1px solid #ffffff;
   border-radius: 16px;
   cursor: pointer;
   transition:
@@ -189,8 +204,8 @@ h1 {
 .primary-button {
   width: 100%;
   padding: 16px 18px;
-  color: #08111f;
-  background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%);
+  color: #000000;
+  background: #ffffff;
   font-weight: 700;
 }
 
@@ -204,15 +219,96 @@ h1 {
 .secondary-button,
 .danger-button {
   padding: 14px 16px;
-  color: #ecf2ff;
+  color: #ffffff;
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.08);
+  background: #111111;
 }
 
 .danger-button {
-  background: rgba(239, 68, 68, 0.22);
+  background: #111111;
+}
+
+.transcript-card {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 640px;
+}
+
+.transcript-header {
+  align-items: flex-end;
+}
+
+.transcript-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  align-content: start;
+  max-height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.transcript-item {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.transcript-speaker {
+  color: #cfcfcf;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transcript-item p {
+  margin: 0;
+  color: #ffffff;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #2a2a2a;
+  border-radius: 16px;
+  background: #0a0a0a;
+}
+
+.transcript-state {
+  color: #bdbdbd;
+  font-size: 0.8rem;
+}
+
+.transcript-user {
+  justify-items: end;
+}
+
+.transcript-user .transcript-speaker {
+  text-align: right;
+}
+
+.transcript-user p {
+  background: #111111;
+}
+
+.transcript-system .transcript-speaker,
+.transcript-error .transcript-speaker {
+  color: #9f9f9f;
+}
+
+.transcript-system p,
+.transcript-error p {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: #cfcfcf;
+}
+
+.transcript-error p {
+  color: #ffffff;
 }
 
 @media (max-width: 640px) {
@@ -220,6 +316,7 @@ h1 {
     padding: 24px;
   }
 
+  .app-grid,
   .card-header,
   .details-grid,
   .secondary-controls {
@@ -228,5 +325,9 @@ h1 {
 
   .card-header {
     display: grid;
+  }
+
+  .transcript-card {
+    min-height: auto;
   }
 }

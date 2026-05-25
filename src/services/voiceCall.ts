@@ -22,12 +22,17 @@ type Subscriber = (event: VoiceCallEvent) => void;
 type StartCallOptions = {
   apiBaseUrl: string;
   model: string;
+  respondentRowId: number;
 };
 
 type ClientSecretResponse = {
   value: string;
   expires_at?: number;
   voice?: string;
+  instructions?: string;
+  initialGreeting?: string;
+  questionDocumentContext?: string;
+  studentResponseContext?: string;
 };
 
 class VoiceCallService {
@@ -44,6 +49,20 @@ class VoiceCallService {
   private voice = "marin";
 
   private subscribers = new Set<Subscriber>();
+
+  private pendingSessionInstructions: string | null = null;
+
+  private pendingInitialGreeting: string | null = null;
+
+  private pendingQuestionDocumentContext: string | null = null;
+
+  private pendingStudentResponseContext: string | null = null;
+
+  private hasAppliedSessionUpdate = false;
+
+  private hasInjectedContext = false;
+
+  private hasStartedInitialResponse = false;
 
   private transcriptEntries = new Map<
     string,
@@ -84,6 +103,13 @@ class VoiceCallService {
 
       const clientSecret = await this.fetchClientSecret(options);
       this.voice = clientSecret.voice;
+      this.pendingSessionInstructions = clientSecret.instructions;
+      this.pendingInitialGreeting = clientSecret.initialGreeting;
+      this.pendingQuestionDocumentContext = clientSecret.questionDocumentContext;
+      this.pendingStudentResponseContext = clientSecret.studentResponseContext;
+      this.hasAppliedSessionUpdate = false;
+      this.hasInjectedContext = false;
+      this.hasStartedInitialResponse = false;
       const peerConnection = new RTCPeerConnection();
       this.peerConnection = peerConnection;
 
@@ -130,6 +156,7 @@ class VoiceCallService {
         });
       });
       this.dataChannel.addEventListener("message", (event) => {
+        this.handleRealtimeServerMessage(event.data);
         const parsedEvents = this.parseServerEvent(event.data);
         parsedEvents.forEach((parsedEvent) => {
           this.publish(parsedEvent);
@@ -167,6 +194,13 @@ class VoiceCallService {
 
     this.dataChannel?.close();
     this.dataChannel = null;
+    this.pendingSessionInstructions = null;
+    this.pendingInitialGreeting = null;
+    this.pendingQuestionDocumentContext = null;
+    this.pendingStudentResponseContext = null;
+    this.hasAppliedSessionUpdate = false;
+    this.hasInjectedContext = false;
+    this.hasStartedInitialResponse = false;
 
     this.peerConnection?.close();
     this.peerConnection = null;
@@ -226,13 +260,21 @@ class VoiceCallService {
   private async fetchClientSecret({
     apiBaseUrl,
     model,
-  }: StartCallOptions): Promise<{ value: string; voice: string }> {
+    respondentRowId,
+  }: StartCallOptions): Promise<{
+    value: string;
+    voice: string;
+    instructions: string | null;
+    initialGreeting: string | null;
+    questionDocumentContext: string | null;
+    studentResponseContext: string | null;
+  }> {
     const response = await fetch(`${apiBaseUrl}/api/realtime/client-secret`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify({ model, respondentRowId }),
     });
 
     const payload = (await response.json()) as
@@ -250,6 +292,24 @@ class VoiceCallService {
     return {
       value: payload.value,
       voice: payload.voice?.trim() || this.voice,
+      instructions:
+        "instructions" in payload && typeof payload.instructions === "string"
+          ? payload.instructions
+          : null,
+      initialGreeting:
+        "initialGreeting" in payload && typeof payload.initialGreeting === "string"
+          ? payload.initialGreeting
+          : null,
+      questionDocumentContext:
+        "questionDocumentContext" in payload &&
+        typeof payload.questionDocumentContext === "string"
+          ? payload.questionDocumentContext
+          : null,
+      studentResponseContext:
+        "studentResponseContext" in payload &&
+        typeof payload.studentResponseContext === "string"
+          ? payload.studentResponseContext
+          : null,
     };
   }
 
@@ -281,6 +341,104 @@ class VoiceCallService {
     return this.mediaStream?.getAudioTracks() ?? [];
   }
 
+  private handleRealtimeServerMessage(rawEvent: string): void {
+    try {
+      const event = JSON.parse(rawEvent) as RealtimeServerEvent;
+
+      if (event.type === "session.created" && !this.hasAppliedSessionUpdate) {
+        this.hasAppliedSessionUpdate = true;
+        this.sendSessionUpdate();
+        return;
+      }
+
+      if (event.type === "session.updated" && !this.hasInjectedContext) {
+        this.hasInjectedContext = true;
+        this.injectSessionContext();
+        this.hasStartedInitialResponse = true;
+        this.sendInitialPrompt();
+      }
+    } catch {
+      // Ignore non-JSON control messages here; parseServerEvent handles user-visible logging.
+    }
+  }
+
+  private sendSessionUpdate(): void {
+    if (!this.pendingSessionInstructions) {
+      return;
+    }
+
+    this.sendRealtimeEvent({
+      type: "session.update",
+      session: {
+        type: "realtime",
+        instructions: this.pendingSessionInstructions,
+      },
+    });
+  }
+
+  private injectSessionContext(): void {
+    if (this.pendingQuestionDocumentContext) {
+      this.sendRealtimeEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: this.pendingQuestionDocumentContext,
+            },
+          ],
+        },
+      });
+    }
+
+    if (this.pendingStudentResponseContext) {
+      this.sendRealtimeEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: this.pendingStudentResponseContext,
+            },
+          ],
+        },
+      });
+    }
+  }
+
+  private sendInitialPrompt(): void {
+    const greeting = this.pendingInitialGreeting ?? "Welcome to the feedback session.";
+
+    this.sendRealtimeEvent({
+      type: "response.create",
+      response: {
+        instructions: [
+          `Start now by saying exactly: ${greeting}`,
+          "Speak only in English.",
+          "Immediately after the greeting, ask if the student is ready to continue.",
+          "Do not review any question yet.",
+          "Wait for the student to confirm readiness before asking which question number they want to start with.",
+          "Use only the provided questions and the selected response row as the basis for the interaction.",
+          "Keep the conversation focused on the feedback session, the provided questions, and the selected response row.",
+          "If the user goes off-topic, redirect with: Let's get back to the topic of the feedback session.",
+          "If the user asks for another language, stay in English and return to the feedback session.",
+        ].join(" "),
+      },
+    });
+  }
+
+  private sendRealtimeEvent(event: Record<string, unknown>): void {
+    if (!this.dataChannel || this.dataChannel.readyState !== "open") {
+      return;
+    }
+
+    this.dataChannel.send(JSON.stringify(event));
+  }
+
   private updateStatus(status: VoiceCallStatus, message: string): void {
     this.status = status;
     this.publish({ type: "status", status, message });
@@ -295,11 +453,25 @@ class VoiceCallService {
   private parseServerEvent(rawEvent: string): VoiceCallEvent[] {
     try {
       const parsed = JSON.parse(rawEvent) as RealtimeServerEvent;
+      if (parsed.type === "error") {
+        return [
+          {
+            type: "error",
+            message:
+              parsed.error?.message ||
+              parsed.message ||
+              "Received a Realtime API error event.",
+          },
+        ];
+      }
+
       const events: VoiceCallEvent[] = [
         {
           type: "event",
           message: parsed.type
-            ? `Realtime event: ${parsed.type}`
+            ? parsed.error?.message
+              ? `Realtime event: ${parsed.type} - ${parsed.error.message}`
+              : `Realtime event: ${parsed.type}`
             : "Received a Realtime server event.",
         },
       ];
@@ -437,6 +609,10 @@ type RealtimeServerEvent = {
   delta?: string;
   transcript?: string;
   text?: string;
+  message?: string;
+  error?: {
+    message?: string;
+  };
 };
 
 export const voiceCallService = new VoiceCallService();

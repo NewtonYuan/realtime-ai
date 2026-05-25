@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   type VoiceCallEvent,
   type VoiceCallStatus,
@@ -34,6 +34,22 @@ type TranscriptItem = {
   isFinal: boolean;
 };
 
+type RespondentContext = {
+  rowId: number;
+  state: string;
+  startedOn: string;
+  completed: string;
+  timeTaken: string;
+  grade: string;
+  answeredCount: number;
+  questionCount: number;
+  responses: Array<{
+    questionNumber: number;
+    questionLabel: string;
+    responseText: string;
+  }>;
+};
+
 function App() {
   const [status, setStatus] = useState<VoiceCallStatus>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -43,8 +59,13 @@ function App() {
   const [lastEvent, setLastEvent] = useState<VoiceCallEvent | null>(null);
   const [realtimeVoice, setRealtimeVoice] = useState(voiceCallService.getVoice());
   const [transcriptItems, setTranscriptItems] = useState<TranscriptItem[]>([]);
+  const [rowIdInput, setRowIdInput] = useState("");
+  const [respondent, setRespondent] = useState<RespondentContext | null>(null);
+  const [isLoadingRespondent, setIsLoadingRespondent] = useState(false);
+  const [respondentError, setRespondentError] = useState<string | null>(null);
 
   const isConnected = status === "connected";
+  const canStartCall = Boolean(respondent) && !isConnected && !isBusy;
   const lastEventMessage =
     lastEvent?.type === "status" || lastEvent?.type === "event" || lastEvent?.type === "error"
       ? lastEvent.message
@@ -150,7 +171,68 @@ function App() {
     setTranscriptItems((currentItems) => [...currentItems, item]);
   }
 
+  async function handleLoadRespondent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRespondentError(null);
+    setError(null);
+    setIsLoadingRespondent(true);
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/respondents/${encodeURIComponent(rowIdInput.trim())}`,
+      );
+      const payload = (await response.json()) as
+        | { respondent: RespondentContext }
+        | { error?: string };
+
+      if (!response.ok || !("respondent" in payload) || !payload.respondent) {
+        throw new Error(
+          "error" in payload && payload.error
+            ? payload.error
+            : "Unable to load that worksheet row.",
+        );
+      }
+
+      setRespondent(payload.respondent);
+      setTranscriptItems([
+        {
+          id: `system-respondent-${payload.respondent.rowId}`,
+          speaker: "system",
+          text: `Loaded worksheet row ${payload.respondent.rowId}. The assistant will use the saved responses as call context.`,
+          isFinal: true,
+        },
+      ]);
+    } catch (loadError) {
+      setRespondent(null);
+      setRespondentError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load that worksheet row.",
+      );
+    } finally {
+      setIsLoadingRespondent(false);
+    }
+  }
+
+  function handleResetRespondent() {
+    if (isConnected || isBusy) {
+      return;
+    }
+
+    setRespondent(null);
+    setRowIdInput("");
+    setRespondentError(null);
+    setError(null);
+    setLastEvent(null);
+    setTranscriptItems([]);
+  }
+
   async function handleStartCall() {
+    if (!respondent) {
+      setError("Enter a worksheet row ID before starting the call.");
+      return;
+    }
+
     setError(null);
     setLastEvent(null);
     setIsBusy(true);
@@ -158,7 +240,7 @@ function App() {
       {
         id: "system-start",
         speaker: "system",
-        text: "Starting a new call.",
+        text: `Starting a new call for worksheet row ${respondent.rowId}.`,
         isFinal: true,
       },
     ]);
@@ -167,6 +249,7 @@ function App() {
       await voiceCallService.startCall({
         apiBaseUrl,
         model: realtimeModel,
+        respondentRowId: respondent.rowId,
       });
       setStatus("connected");
       setIsMuted(voiceCallService.isMuted());
@@ -220,95 +303,169 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="app-grid">
-        <div className="call-card">
-          <div className="details-grid">
-            <div className="detail-panel">
-              <span className="detail-label">Call status</span>
-              <strong>{statusLabels[status]}</strong>
+      {!respondent ? (
+        <section className="gate-shell">
+          <div className="call-card gate-card">
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Realtime Intake</p>
+                <h1>Enter worksheet row ID</h1>
+                <p className="supporting-text">
+                  Use the Excel worksheet row number from <code>responses.xlsx</code>.
+                  {" "}
+                  Row <code>2</code> is the first response row.
+                </p>
+              </div>
             </div>
-            <div className="detail-panel">
-              <span className="detail-label">Elapsed time</span>
-              <strong>{formatElapsedTime(elapsedSeconds)}</strong>
-            </div>
-            <div className="detail-panel">
-              <span className="detail-label">Realtime voice</span>
-              <strong>{realtimeVoice}</strong>
-            </div>
-          </div>
 
-          <div className="detail-panel event-panel">
-            <span className="detail-label">Connection details</span>
-            <strong>{lastEventMessage}</strong>
-            <span className="detail-caption">Model: {realtimeModel}</span>
-          </div>
-
-          {error ? <div className="feedback error">{error}</div> : null}
-          {isBusy ? <div className="feedback loading">Updating call state...</div> : null}
-
-          <div className="controls">
-            <button
-              className="primary-button"
-              onClick={handleStartCall}
-              disabled={isConnected || isBusy}
-              type="button"
-            >
-              {status === "connecting" ? "Starting..." : "Start Voice Call"}
-            </button>
-
-            <div className="secondary-controls">
+            <form className="entry-form" onSubmit={handleLoadRespondent}>
+              <label className="input-label" htmlFor="row-id">
+                Worksheet row ID
+              </label>
+              <input
+                id="row-id"
+                className="text-input"
+                inputMode="numeric"
+                onChange={(event) => setRowIdInput(event.target.value)}
+                placeholder="e.g. 2"
+                type="text"
+                value={rowIdInput}
+              />
               <button
-                className="secondary-button"
-                onClick={handleToggleMute}
-                disabled={!isConnected || isBusy}
+                className="primary-button"
+                disabled={!rowIdInput.trim() || isLoadingRespondent}
+                type="submit"
+              >
+                {isLoadingRespondent ? "Loading..." : "Continue"}
+              </button>
+            </form>
+
+            {respondentError ? <div className="feedback error">{respondentError}</div> : null}
+          </div>
+        </section>
+      ) : (
+        <section className="app-grid">
+          <div className="call-card">
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Realtime Intake</p>
+                <h1>Worksheet row {respondent.rowId}</h1>
+                <p className="supporting-text">
+                  The assistant will review this row&apos;s saved responses against the
+                  lab questions and give feedback.
+                </p>
+              </div>
+              <button
+                className="secondary-button inline-button"
+                disabled={isConnected || isBusy}
+                onClick={handleResetRespondent}
                 type="button"
               >
-                {isMuted ? "Unmute Microphone" : "Mute Microphone"}
+                Change ID
               </button>
+            </div>
+
+            <div className="details-grid">
+              <div className="detail-panel">
+                <span className="detail-label">Call status</span>
+                <strong>{statusLabels[status]}</strong>
+              </div>
+              <div className="detail-panel">
+                <span className="detail-label">Elapsed time</span>
+                <strong>{formatElapsedTime(elapsedSeconds)}</strong>
+              </div>
+              <div className="detail-panel">
+                <span className="detail-label">Realtime voice</span>
+                <strong>{realtimeVoice}</strong>
+              </div>
+              <div className="detail-panel">
+                <span className="detail-label">Loaded responses</span>
+                <strong>
+                  {respondent.answeredCount}/{respondent.questionCount}
+                </strong>
+              </div>
+              <div className="detail-panel">
+                <span className="detail-label">Workbook state</span>
+                <strong>{respondent.state || "Unknown"}</strong>
+              </div>
+            </div>
+
+            <div className="detail-panel event-panel">
+              <span className="detail-label">Connection details</span>
+              <strong>{lastEventMessage}</strong>
+              <span className="detail-caption">Model: {realtimeModel}</span>
+              <span className="detail-caption">
+                Grade: {respondent.grade || "N/A"} | Time taken: {respondent.timeTaken || "N/A"}
+              </span>
+            </div>
+
+            {error ? <div className="feedback error">{error}</div> : null}
+            {isBusy ? <div className="feedback loading">Updating call state...</div> : null}
+
+            <div className="controls">
               <button
-                className="danger-button"
-                onClick={handleEndCall}
-                disabled={!isConnected || isBusy}
+                className="primary-button"
+                onClick={handleStartCall}
+                disabled={!canStartCall}
                 type="button"
               >
-                End Call
+                {status === "connecting" ? "Starting..." : "Start Voice Call"}
               </button>
+
+              <div className="secondary-controls">
+                <button
+                  className="secondary-button"
+                  onClick={handleToggleMute}
+                  disabled={!isConnected || isBusy}
+                  type="button"
+                >
+                  {isMuted ? "Unmute Microphone" : "Mute Microphone"}
+                </button>
+                <button
+                  className="danger-button"
+                  onClick={handleEndCall}
+                  disabled={!isConnected || isBusy}
+                  type="button"
+                >
+                  End Call
+                </button>
+              </div>
             </div>
+
           </div>
 
-        </div>
-
-        <aside className="call-card transcript-card">
-          <div className="card-header transcript-header">
-            <div>
-              <h2>Transcript</h2>
+          <aside className="call-card transcript-card">
+            <div className="card-header transcript-header">
+              <div>
+                <h2>Transcript</h2>
+              </div>
             </div>
-          </div>
 
-          <div className="transcript-list" aria-live="polite">
-            {transcriptItems.map((item) => (
-              <article
-                key={item.id}
-                className={`transcript-item transcript-${item.speaker}`}
-              >
-                <span className="transcript-speaker">
-                  {item.speaker === "system"
-                    ? "System"
-                    : item.speaker === "error"
-                      ? "Error"
-                      : item.speaker === "user"
-                        ? "You"
-                        : "Assistant"}
-                </span>
-                <p>{item.text}</p>
-                {!item.isFinal ? (
-                  <span className="transcript-state">In progress</span>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        </aside>
-      </section>
+            <div className="transcript-list" aria-live="polite">
+              {transcriptItems.map((item) => (
+                <article
+                  key={item.id}
+                  className={`transcript-item transcript-${item.speaker}`}
+                >
+                  <span className="transcript-speaker">
+                    {item.speaker === "system"
+                      ? "System"
+                      : item.speaker === "error"
+                        ? "Error"
+                        : item.speaker === "user"
+                          ? "You"
+                          : "Assistant"}
+                  </span>
+                  <p>{item.text}</p>
+                  {!item.isFinal ? (
+                    <span className="transcript-state">In progress</span>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </aside>
+        </section>
+      )}
     </main>
   );
 }

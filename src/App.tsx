@@ -48,6 +48,13 @@ type RespondentContext = {
     questionLabel: string;
     responseText: string;
   }>;
+  submission?: {
+    assignmentTitle: string;
+    repositoryName: string;
+    repoPath: string;
+    branch: string;
+    finalCommit: string;
+  } | null;
 };
 
 function App() {
@@ -198,7 +205,9 @@ function App() {
         {
           id: `system-respondent-${payload.respondent.rowId}`,
           speaker: "system",
-          text: `Loaded worksheet row ${payload.respondent.rowId}. The assistant will use the saved responses as call context.`,
+          text: payload.respondent.submission
+            ? `Loaded worksheet row ${payload.respondent.rowId}. The assistant will use repository context for ${payload.respondent.submission.repositoryName}.`
+            : `Loaded worksheet row ${payload.respondent.rowId}. The assistant will use the saved responses as call context.`,
           isFinal: true,
         },
       ]);
@@ -351,8 +360,9 @@ function App() {
                 <p className="eyebrow">Realtime Intake</p>
                 <h1>Worksheet row {respondent.rowId}</h1>
                 <p className="supporting-text">
-                  The assistant will review this row&apos;s saved responses against the
-                  lab questions and give feedback.
+                  {respondent.submission
+                    ? "The assistant will probe the linked code submission using repository evidence."
+                    : "The assistant will review this row's saved responses against the lab questions and give feedback."}
                 </p>
               </div>
               <button
@@ -385,6 +395,10 @@ function App() {
                 </strong>
               </div>
               <div className="detail-panel">
+                <span className="detail-label">Submission context</span>
+                <strong>{respondent.submission?.repositoryName || "None"}</strong>
+              </div>
+              <div className="detail-panel">
                 <span className="detail-label">Workbook state</span>
                 <strong>{respondent.state || "Unknown"}</strong>
               </div>
@@ -397,6 +411,12 @@ function App() {
               <span className="detail-caption">
                 Grade: {respondent.grade || "N/A"} | Time taken: {respondent.timeTaken || "N/A"}
               </span>
+              {respondent.submission ? (
+                <span className="detail-caption">
+                  Repo: {respondent.submission.branch || "unknown branch"} @{" "}
+                  {respondent.submission.finalCommit || "unknown commit"}
+                </span>
+              ) : null}
             </div>
 
             {error ? <div className="feedback error">{error}</div> : null}

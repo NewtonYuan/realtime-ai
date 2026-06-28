@@ -1,0 +1,39 @@
+{
+  "2": {
+    "assignmentTitle": "Assignment 1: Library Loan System",
+    "repositoryName": "Assignment-1-Library-Loan-System",
+    "repoPath": "../Assignment-1-Library-Loan-System",
+    "branch": "main",
+    "finalCommit": "d6d8c0d",
+    "verification": "mvn -q test passed on 2026-06-15.",
+    "focus": [
+      "Ask about the student's object-oriented design decisions.",
+      "Ask about validation order and edge cases in the loan workflow.",
+      "Ask how the command-line parser handles quoted values and where it is limited.",
+      "Ask how the behaviour tests prove the implementation works and what they do not cover.",
+      "Ask how the commit history shows progression from scaffold to complete workflow."
+    ],
+    "contextFiles": [
+      "ASSIGNMENT_BRIEF.md",
+      "README.md",
+      "src/main/java/nz/ac/auckland/se281/LibraryLoanSystem.java",
+      "src/main/java/nz/ac/auckland/se281/Book.java",
+      "src/main/java/nz/ac/auckland/se281/Borrower.java",
+      "src/main/java/nz/ac/auckland/se281/Main.java",
+      "src/main/java/nz/ac/auckland/se281/MessageCli.java",
+      "src/test/java/nz/ac/auckland/se281/LibraryLoanSystemTest.java"
+    ],
+    "probingQuestions": [
+      "In Book.java, you store currentBorrower and dueDate directly on Book. What made you choose that over creating a separate Loan class?",
+      "In LibraryLoanSystem.borrowBook, you check borrower existence before book existence. What user experience or design reason led you to that validation order?",
+      "Your ID lookup methods use equalsIgnoreCase. How should the system behave if a staff member adds B001 and later tries b001?",
+      "getBooks and getBorrowers return the internal ArrayList objects. What could another class do with those lists, and would that matter for this assignment?",
+      "In Book.getStatus, the model class creates display text such as On loan to. How did you decide whether status formatting belonged in Book or in LibraryLoanSystem?",
+      "Your parser in Main.parseArguments handles quoted titles and names. What cases does it still not handle, such as unmatched quotes or escaped quotes?",
+      "The tests assert LocalDate.now().plusDays(14). Can you think of any reason using the system clock directly might make testing harder in a larger project?",
+      "You added tests after the main behaviour was implemented. How did those tests change your confidence in the borrow and return workflow?",
+      "printLoans detects overdue loans, but the public API always creates due dates 14 days in the future. How could you test overdue behaviour without waiting two weeks?",
+      "Looking at the commit history, the CLI parser was added after the loan logic. Did that change reveal anything about assumptions in addBook or registerBorrower?"
+    ]
+  }
+}

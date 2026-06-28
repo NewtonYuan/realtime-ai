@@ -33,6 +33,7 @@ type ClientSecretResponse = {
   initialGreeting?: string;
   questionDocumentContext?: string;
   studentResponseContext?: string;
+  submissionContext?: string;
 };
 
 class VoiceCallService {
@@ -57,6 +58,8 @@ class VoiceCallService {
   private pendingQuestionDocumentContext: string | null = null;
 
   private pendingStudentResponseContext: string | null = null;
+
+  private pendingSubmissionContext: string | null = null;
 
   private hasAppliedSessionUpdate = false;
 
@@ -107,6 +110,7 @@ class VoiceCallService {
       this.pendingInitialGreeting = clientSecret.initialGreeting;
       this.pendingQuestionDocumentContext = clientSecret.questionDocumentContext;
       this.pendingStudentResponseContext = clientSecret.studentResponseContext;
+      this.pendingSubmissionContext = clientSecret.submissionContext;
       this.hasAppliedSessionUpdate = false;
       this.hasInjectedContext = false;
       this.hasStartedInitialResponse = false;
@@ -198,6 +202,7 @@ class VoiceCallService {
     this.pendingInitialGreeting = null;
     this.pendingQuestionDocumentContext = null;
     this.pendingStudentResponseContext = null;
+    this.pendingSubmissionContext = null;
     this.hasAppliedSessionUpdate = false;
     this.hasInjectedContext = false;
     this.hasStartedInitialResponse = false;
@@ -268,6 +273,7 @@ class VoiceCallService {
     initialGreeting: string | null;
     questionDocumentContext: string | null;
     studentResponseContext: string | null;
+    submissionContext: string | null;
   }> {
     const response = await fetch(`${apiBaseUrl}/api/realtime/client-secret`, {
       method: "POST",
@@ -309,6 +315,11 @@ class VoiceCallService {
         "studentResponseContext" in payload &&
         typeof payload.studentResponseContext === "string"
           ? payload.studentResponseContext
+          : null,
+      submissionContext:
+        "submissionContext" in payload &&
+        typeof payload.submissionContext === "string"
+          ? payload.submissionContext
           : null,
     };
   }
@@ -408,10 +419,39 @@ class VoiceCallService {
         },
       });
     }
+
+    if (this.pendingSubmissionContext) {
+      this.sendRealtimeEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: this.pendingSubmissionContext,
+            },
+          ],
+        },
+      });
+    }
   }
 
   private sendInitialPrompt(): void {
     const greeting = this.pendingInitialGreeting ?? "Welcome to the feedback session.";
+    const reviewInstruction = this.pendingSubmissionContext
+      ? [
+          "Wait for the student to confirm readiness before asking about the code submission.",
+          "After confirmation, say briefly that you will ask about their code and then ask one probing question grounded in the repository context.",
+          "Do not ask the student to choose a worksheet question number.",
+          "Use the repository submission context as the main basis for the interaction.",
+          "Ask about concrete files, methods, commits, tests, and design choices.",
+        ]
+      : [
+          "Wait for the student to confirm readiness before asking which question number they want to start with.",
+          "Use only the provided questions and the selected response row as the basis for the interaction.",
+          "Keep the conversation focused on the feedback session, the provided questions, and the selected response row.",
+        ];
 
     this.sendRealtimeEvent({
       type: "response.create",
@@ -421,9 +461,7 @@ class VoiceCallService {
           "Speak only in English.",
           "Immediately after the greeting, ask if the student is ready to continue.",
           "Do not review any question yet.",
-          "Wait for the student to confirm readiness before asking which question number they want to start with.",
-          "Use only the provided questions and the selected response row as the basis for the interaction.",
-          "Keep the conversation focused on the feedback session, the provided questions, and the selected response row.",
+          ...reviewInstruction,
           "If the user goes off-topic, redirect with: Let's get back to the topic of the feedback session.",
           "If the user asks for another language, stay in English and return to the feedback session.",
         ].join(" "),

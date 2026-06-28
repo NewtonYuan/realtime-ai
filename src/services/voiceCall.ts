@@ -446,10 +446,12 @@ class VoiceCallService {
           "Do not ask the student to choose a worksheet question number.",
           "Use the repository submission context as the main basis for the interaction.",
           "Ask about concrete files, methods, commits, tests, and design choices.",
+          "After the student answers, ask one deeper follow-up about the same code path before moving to another topic.",
         ]
       : [
           "Wait for the student to confirm readiness before asking which question number they want to start with.",
           "Use only the provided questions and the selected response row as the basis for the interaction.",
+          "After reading a selected question and summarizing the saved answer, ask one probing follow-up about the student's reasoning, assumptions, or edge cases.",
           "Keep the conversation focused on the feedback session, the provided questions, and the selected response row.",
         ];
 

@@ -116,6 +116,9 @@ export function buildRepositorySubmissionContext(submission, options = {}) {
     `- RefactoringMiner command: ${
       refactoringMinerConfig.configuredCommand || "[auto-detect from PATH]"
     }`,
+    `- RefactoringMiner Java home: ${
+      refactoringMinerConfig.javaHome || "[Use default java from PATH]"
+    }`,
     submission.verification ? `- Verification: ${submission.verification}` : null,
     "",
     focus.length > 0
@@ -147,6 +150,11 @@ function getRefactoringMinerConfig(submission, options) {
     submission.refactoringMinerCommand,
     process.env.REFACTORING_MINER_COMMAND,
   );
+  const javaHome = firstNonBlank(
+    submission.refactoringMinerJavaHome,
+    process.env.REFACTORING_MINER_JAVA_HOME,
+    process.env.JAVA_HOME,
+  );
   const required =
     typeof submission.requireRefactoringMiner === "boolean"
       ? submission.requireRefactoringMiner
@@ -158,6 +166,7 @@ function getRefactoringMinerConfig(submission, options) {
 
   return {
     configuredCommand,
+    javaHome,
     required,
     maxCommits,
     allowMissingRequired: Boolean(options.allowMissingRequiredRefactoringMiner),
@@ -439,7 +448,7 @@ function buildScoreReasons({ files, totals, refactorings, hasOnlyLowSignalFiles 
 }
 
 function detectRefactorings(repoPath, commits, config) {
-  const commandResolution = resolveRefactoringMinerCommand(config.configuredCommand);
+  const commandResolution = resolveRefactoringMinerCommand(config);
   const results = new Map();
 
   if (!commandResolution.command) {
@@ -471,7 +480,9 @@ function detectRefactorings(repoPath, commits, config) {
     );
 
     try {
-      runCommand(commandResolution.command, ["-c", repoPath, commit.sha, "-json", outputPath]);
+      runCommand(commandResolution.command, ["-c", repoPath, commit.sha, "-json", outputPath], {
+        env: buildRefactoringMinerEnv(config.javaHome),
+      });
       const parsed = JSON.parse(fs.readFileSync(outputPath, "utf8"));
       const refactorings = extractRefactorings(parsed);
       results.set(commit.sha, { refactorings });
@@ -497,9 +508,9 @@ function detectRefactorings(repoPath, commits, config) {
   return results;
 }
 
-function resolveRefactoringMinerCommand(configuredCommand) {
-  const candidates = configuredCommand
-    ? [configuredCommand]
+function resolveRefactoringMinerCommand(config) {
+  const candidates = config.configuredCommand
+    ? [config.configuredCommand]
     : process.platform === "win32"
       ? ["RefactoringMiner.bat", "RefactoringMiner"]
       : ["RefactoringMiner"];
@@ -509,7 +520,10 @@ function resolveRefactoringMinerCommand(configuredCommand) {
     const command = stripWrappingQuotes(candidate);
 
     try {
-      runCommand(command, ["-h"], { maxBuffer: 1024 * 1024 });
+      runCommand(command, ["-h"], {
+        env: buildRefactoringMinerEnv(config.javaHome),
+        maxBuffer: 1024 * 1024,
+      });
       return { command, error: "" };
     } catch (error) {
       errors.push(`${command}: ${formatCommandError(error)}`);
@@ -723,14 +737,13 @@ function runGit(repoPath, args) {
 
 function runCommand(command, args, options = {}) {
   const isWindowsBatchFile = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
-  const commandArgs = isWindowsBatchFile
-    ? ["/d", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")]
-    : args;
+  const commandArgs = isWindowsBatchFile ? ["/d", "/c", "call", command, ...args] : args;
   const executable = isWindowsBatchFile ? "cmd.exe" : command;
 
   return execFileSync(executable, commandArgs, {
     cwd: options.cwd,
     encoding: "utf8",
+    env: options.env ? { ...process.env, ...options.env } : process.env,
     maxBuffer: options.maxBuffer || 1024 * 1024 * 8,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -756,14 +769,8 @@ function stripWrappingQuotes(value) {
   return String(value).replace(/^["']|["']$/g, "");
 }
 
-function quoteWindowsCommandArg(value) {
-  const text = String(value);
-
-  if (!/[()\s"%!^<>&|]/.test(text)) {
-    return text;
-  }
-
-  return `"${text.replace(/"/g, '\\"')}"`;
+function buildRefactoringMinerEnv(javaHome) {
+  return javaHome ? { JAVA_HOME: javaHome } : {};
 }
 
 function formatCommandError(error) {

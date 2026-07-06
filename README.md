@@ -75,11 +75,14 @@ Optional repository-analysis defaults:
 ```env
 REPOSITORY_ANALYSIS_CACHE_DIR=
 REFACTORING_MINER_COMMAND=
+REFACTORING_MINER_JAVA_HOME=
 REFACTORING_MINER_REQUIRED=true
 REFACTORING_MINER_MAX_COMMITS=20
 ```
 
 `REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend tries to run `RefactoringMiner.bat` or `RefactoringMiner` from PATH. Repository rows can also set `requireRefactoringMiner: true` in `data/submissions.json`; when required, the voice-call API fails fast if RefactoringMiner is unavailable instead of quietly falling back to Git-only scoring.
+
+Recent RefactoringMiner releases may require a newer Java runtime than the rest of the app. Set `REFACTORING_MINER_JAVA_HOME` to a Java 21 runtime if your system `JAVA_HOME` points at Java 17.
 
 RefactoringMiner is called with the local-repository commit mode:
 

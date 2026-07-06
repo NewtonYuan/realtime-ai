@@ -9,6 +9,8 @@
     "commitAnalysisLimit": 80,
     "maxDiffCharacters": 9000,
     "maxFileCharacters": 12000,
+    "requireRefactoringMiner": true,
+    "refactoringMinerCommitLimit": 20,
     "ignoreCommitPrefixes": [
       "18015d6",
       "65499e6",

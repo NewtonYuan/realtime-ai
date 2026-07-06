@@ -37,7 +37,7 @@ const CONFIG_EXTENSIONS = new Set([
   ".properties",
 ]);
 
-export function buildRepositorySubmissionContext(submission) {
+export function buildRepositorySubmissionContext(submission, options = {}) {
   const repositoryAvailability = getRepositoryAvailability(submission);
   const repoPath = repositoryAvailability.repoPath;
   const repositoryName = submission.repositoryName || path.basename(repoPath || "submission");
@@ -56,6 +56,7 @@ export function buildRepositorySubmissionContext(submission) {
   const ignoredCommitPrefixes = Array.isArray(submission.ignoreCommitPrefixes)
     ? submission.ignoreCommitPrefixes.map((value) => String(value).trim()).filter(Boolean)
     : [];
+  const refactoringMinerConfig = getRefactoringMinerConfig(submission, options);
   const commitAnalysis = repositoryAvailability.error
     ? {
         status: repositoryAvailability.error,
@@ -67,6 +68,7 @@ export function buildRepositorySubmissionContext(submission) {
         commitLimit,
         maxDiffCharacters,
         ignoredCommitPrefixes,
+        refactoringMinerConfig,
       });
   const selectedFileEvidence = repositoryAvailability.error
     ? ""
@@ -110,6 +112,10 @@ export function buildRepositorySubmissionContext(submission) {
     ignoredCommitPrefixes.length > 0
       ? `- Configured ignored commit prefixes: ${ignoredCommitPrefixes.join(", ")}`
       : null,
+    `- RefactoringMiner required: ${refactoringMinerConfig.required ? "yes" : "no"}`,
+    `- RefactoringMiner command: ${
+      refactoringMinerConfig.configuredCommand || "[auto-detect from PATH]"
+    }`,
     submission.verification ? `- Verification: ${submission.verification}` : null,
     "",
     focus.length > 0
@@ -134,6 +140,28 @@ export function buildRepositorySubmissionContext(submission) {
   ]
     .filter((section) => section !== null)
     .join("\n");
+}
+
+function getRefactoringMinerConfig(submission, options) {
+  const configuredCommand = firstNonBlank(
+    submission.refactoringMinerCommand,
+    process.env.REFACTORING_MINER_COMMAND,
+  );
+  const required =
+    typeof submission.requireRefactoringMiner === "boolean"
+      ? submission.requireRefactoringMiner
+      : process.env.REFACTORING_MINER_REQUIRED?.toLowerCase() === "true";
+  const maxCommits =
+    parsePositiveInteger(submission.refactoringMinerCommitLimit) ||
+    parsePositiveInteger(process.env.REFACTORING_MINER_MAX_COMMITS) ||
+    DEFAULT_MAX_REFACTORING_COMMITS;
+
+  return {
+    configuredCommand,
+    required,
+    maxCommits,
+    allowMissingRequired: Boolean(options.allowMissingRequiredRefactoringMiner),
+  };
 }
 
 function getRepositoryAvailability(submission) {
@@ -194,6 +222,7 @@ function analyzeRepositoryCommits({
   commitLimit,
   maxDiffCharacters,
   ignoredCommitPrefixes,
+  refactoringMinerConfig,
 }) {
   if (!repoPath || !fs.existsSync(repoPath)) {
     return {
@@ -234,7 +263,7 @@ function analyzeRepositoryCommits({
         (prefix) => commit.sha.startsWith(prefix) || commit.shortSha.startsWith(prefix),
       ),
   );
-  const refactoringByCommit = detectRefactorings(repoPath, commits);
+  const refactoringByCommit = detectRefactorings(repoPath, commits, refactoringMinerConfig);
   const scoredCommits = commits
     .map((commit) => scoreCommit(repoPath, commit, refactoringByCommit.get(commit.sha)))
     .sort((left, right) => right.score - left.score || right.sourceChurn - left.sourceChurn);
@@ -315,6 +344,7 @@ function scoreCommit(repoPath, commit, refactoringInfo) {
     },
   );
   const refactorings = refactoringInfo?.refactorings || [];
+  const refactoringError = refactoringInfo?.error || "";
   const hasOnlyLowSignalFiles =
     files.length > 0 &&
     files.every((file) => ["docs", "config", "generated"].includes(file.category));
@@ -343,6 +373,7 @@ function scoreCommit(repoPath, commit, refactoringInfo) {
     sourceChurn: totals.sourceChurn,
     testChurn: totals.testChurn,
     refactorings,
+    refactoringError,
     reasons: buildScoreReasons({ files, totals, refactorings, hasOnlyLowSignalFiles }),
   };
 }
@@ -407,16 +438,29 @@ function buildScoreReasons({ files, totals, refactorings, hasOnlyLowSignalFiles 
   return reasons;
 }
 
-function detectRefactorings(repoPath, commits) {
-  const command = process.env.REFACTORING_MINER_COMMAND?.trim();
+function detectRefactorings(repoPath, commits, config) {
+  const commandResolution = resolveRefactoringMinerCommand(config.configuredCommand);
   const results = new Map();
 
-  if (!command) {
-    results.status = "RefactoringMiner not configured; set REFACTORING_MINER_COMMAND to enable refactoring signals.";
+  if (!commandResolution.command) {
+    const missingStatus = [
+      config.required
+        ? "RefactoringMiner is required for this repository submission but is not available."
+        : "RefactoringMiner is not available; Git-only commit scoring was used.",
+      commandResolution.error,
+      "Set REFACTORING_MINER_COMMAND to the RefactoringMiner executable or add RefactoringMiner to PATH.",
+    ].join(" ");
+
+    if (config.required && !config.allowMissingRequired) {
+      throw new Error(missingStatus);
+    }
+
+    results.status = missingStatus;
     return results;
   }
 
-  const commitsToAnalyze = commits.slice(-DEFAULT_MAX_REFACTORING_COMMITS);
+  const commitsToAnalyze = commits.slice(-config.maxCommits);
+  let failedCommitCount = 0;
 
   for (const commit of commitsToAnalyze) {
     const outputPath = path.join(
@@ -427,22 +471,55 @@ function detectRefactorings(repoPath, commits) {
     );
 
     try {
-      runCommand(command, ["-c", repoPath, commit.sha, "-json", outputPath]);
+      runCommand(commandResolution.command, ["-c", repoPath, commit.sha, "-json", outputPath]);
       const parsed = JSON.parse(fs.readFileSync(outputPath, "utf8"));
       const refactorings = extractRefactorings(parsed);
       results.set(commit.sha, { refactorings });
     } catch (error) {
+      failedCommitCount += 1;
       results.set(commit.sha, {
         refactorings: [],
-        error: error instanceof Error ? error.message : String(error),
+        error: formatCommandError(error),
       });
     } finally {
       fs.rmSync(outputPath, { force: true });
     }
   }
 
-  results.status = `RefactoringMiner configured; analyzed ${commitsToAnalyze.length} recent commits.`;
+  results.status = [
+    `RefactoringMiner ${config.required ? "required and configured" : "configured"}.`,
+    `Command: ${commandResolution.command}.`,
+    `Ran RefactoringMiner on ${commitsToAnalyze.length} recent commits using -c <repo> <commit> -json <file>.`,
+    failedCommitCount > 0 ? `Failed RefactoringMiner commits: ${failedCommitCount}.` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return results;
+}
+
+function resolveRefactoringMinerCommand(configuredCommand) {
+  const candidates = configuredCommand
+    ? [configuredCommand]
+    : process.platform === "win32"
+      ? ["RefactoringMiner.bat", "RefactoringMiner"]
+      : ["RefactoringMiner"];
+  const errors = [];
+
+  for (const candidate of candidates) {
+    const command = stripWrappingQuotes(candidate);
+
+    try {
+      runCommand(command, ["-h"], { maxBuffer: 1024 * 1024 });
+      return { command, error: "" };
+    } catch (error) {
+      errors.push(`${command}: ${formatCommandError(error)}`);
+    }
+  }
+
+  return {
+    command: "",
+    error: `Tried ${candidates.map(stripWrappingQuotes).join(", ")}. ${errors.join(" ")}`,
+  };
 }
 
 function extractRefactorings(parsedOutput) {
@@ -465,8 +542,11 @@ function formatRefactoringStatus(refactoringByCommit) {
   const commitsWithRefactorings = Array.from(refactoringByCommit.values()).filter(
     (info) => info.refactorings?.length,
   ).length;
+  const commitsWithErrors = Array.from(refactoringByCommit.values()).filter(
+    (info) => info.error,
+  ).length;
 
-  return `${status} Commits with detected refactorings: ${commitsWithRefactorings}.`;
+  return `${status} Commits with detected refactorings: ${commitsWithRefactorings}. RefactoringMiner commit errors: ${commitsWithErrors}.`;
 }
 
 function formatSelectedCommits(commits) {
@@ -489,7 +569,9 @@ function formatSelectedCommits(commits) {
                   `   - ${refactoring.type}: ${refactoring.description || "[No description]"}`,
               ),
             ].join("\n")
-          : "   RefactoringMiner: no refactorings detected or not configured for this commit.",
+          : commit.refactoringError
+            ? `   RefactoringMiner error: ${commit.refactoringError}`
+            : "   RefactoringMiner: no refactorings detected for this commit.",
         "   Evidence diff:",
         indentBlock(commit.diff, "   "),
       ].join("\n"),
@@ -635,21 +717,65 @@ function runGit(repoPath, args) {
   try {
     return runCommand("git", args, { cwd: repoPath }).trim();
   } catch (error) {
-    return `[git ${args.join(" ")} failed: ${
-      error instanceof Error ? error.message : String(error)
-    }]`;
+    return `[git ${args.join(" ")} failed: ${formatCommandError(error)}]`;
   }
 }
 
 function runCommand(command, args, options = {}) {
-  return execFileSync(command, args, {
+  const isWindowsBatchFile = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+  const commandArgs = isWindowsBatchFile
+    ? ["/d", "/c", [command, ...args].map(quoteWindowsCommandArg).join(" ")]
+    : args;
+  const executable = isWindowsBatchFile ? "cmd.exe" : command;
+
+  return execFileSync(executable, commandArgs, {
     cwd: options.cwd,
     encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 8,
-    shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command),
+    maxBuffer: options.maxBuffer || 1024 * 1024 * 8,
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
 function sanitizePathSegment(value) {
   return String(value).replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function firstNonBlank(...values) {
+  return values
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find(Boolean) || "";
+}
+
+function parsePositiveInteger(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function stripWrappingQuotes(value) {
+  return String(value).replace(/^["']|["']$/g, "");
+}
+
+function quoteWindowsCommandArg(value) {
+  const text = String(value);
+
+  if (!/[()\s"%!^<>&|]/.test(text)) {
+    return text;
+  }
+
+  return `"${text.replace(/"/g, '\\"')}"`;
+}
+
+function formatCommandError(error) {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const processError = error;
+  const output =
+    processError.stderr?.toString().trim() ||
+    processError.stdout?.toString().trim() ||
+    processError.message;
+
+  return truncateText(output.replace(/\s+/g, " "), 500);
 }

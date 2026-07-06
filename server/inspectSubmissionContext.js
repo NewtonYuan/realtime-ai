@@ -20,7 +20,11 @@ if (!submission) {
   process.exit(1);
 }
 
-console.log(buildRepositorySubmissionContext(submission));
+console.log(
+  buildRepositorySubmissionContext(submission, {
+    allowMissingRequiredRefactoringMiner: true,
+  }),
+);
 
 function parseRowId(value) {
   const parsedValue = Number.parseInt(String(value ?? ""), 10);

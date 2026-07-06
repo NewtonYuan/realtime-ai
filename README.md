@@ -75,9 +75,17 @@ Optional repository-analysis defaults:
 ```env
 REPOSITORY_ANALYSIS_CACHE_DIR=
 REFACTORING_MINER_COMMAND=
+REFACTORING_MINER_REQUIRED=true
+REFACTORING_MINER_MAX_COMMITS=20
 ```
 
-`REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend still ranks commits using Git churn, file categories, and commit messages; RefactoringMiner signals are simply reported as unavailable.
+`REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend tries to run `RefactoringMiner.bat` or `RefactoringMiner` from PATH. Repository rows can also set `requireRefactoringMiner: true` in `data/submissions.json`; when required, the voice-call API fails fast if RefactoringMiner is unavailable instead of quietly falling back to Git-only scoring.
+
+RefactoringMiner is called with the local-repository commit mode:
+
+```bash
+RefactoringMiner -c <repo-path> <commit-sha> -json <output-file>
+```
 
 ## Repository Submission Context
 
@@ -88,17 +96,19 @@ The context includes:
 - assignment and repository metadata
 - instructor review focus from `data/submissions.json`
 - repository analysis status
-- the selected top high-signal commits with reasons, touched files, optional RefactoringMiner output, and trimmed diffs
+- the selected top high-signal commits with reasons, touched files, RefactoringMiner output, and trimmed diffs
 - selected final file excerpts with line numbers
 - suggested probing questions for the assistant to adapt during the voice call
 
-The backend does not pass the entire commit history or entire repository to the model. For the example assignment row, `topCommitCount` is `3`, and `ignoreCommitPrefixes` excludes scaffold/documentation/admin commits so the assistant focuses on code the student actually wrote.
+The backend does not pass the entire commit history or entire repository to the model. For the example assignment row, `topCommitCount` is `3`, `requireRefactoringMiner` is `true`, and `ignoreCommitPrefixes` excludes scaffold/documentation/admin commits so the assistant focuses on code the student actually wrote.
 
 Preview the exact context without an OpenAI key:
 
 ```bash
 npm run inspect:submission -- 2
 ```
+
+The inspection command is diagnostic: it still prints the context preview when RefactoringMiner is missing, including the missing-tool status, so setup problems can be fixed before starting a call.
 
 ## Current Implementation
 

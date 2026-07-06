@@ -85,7 +85,19 @@ app.post("/api/realtime/client-secret", async (request, response) => {
   const studentResponseContext = respondent && !submission
     ? buildStudentResponseContext(respondent)
     : null;
-  const submissionContext = submission ? buildRepositorySubmissionContext(submission) : null;
+  let submissionContext = null;
+
+  try {
+    submissionContext = submission ? buildRepositorySubmissionContext(submission) : null;
+  } catch (error) {
+    response.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to build repository submission context.",
+    });
+    return;
+  }
 
   try {
     const openAiResponse = await fetch(

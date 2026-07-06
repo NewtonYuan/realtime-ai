@@ -8,6 +8,7 @@
     "dev:client": "vite",
     "dev:server": "node --watch server/index.js",
     "inspect:submission": "node server/inspectSubmissionContext.js",
+    "setup:repo-analysis": "node scripts/setupRepoAnalysisTools.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

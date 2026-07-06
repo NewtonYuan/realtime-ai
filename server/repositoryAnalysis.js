@@ -2,11 +2,17 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_TOP_COMMIT_COUNT = 3;
 const DEFAULT_MAX_DIFF_CHARS = 9000;
 const DEFAULT_MAX_FILE_CHARS = 12000;
 const DEFAULT_MAX_REFACTORING_COMMITS = 20;
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PROJECT_TOOLS_DIR = path.join(PROJECT_ROOT, ".tools");
+const PROJECT_TOOLS_MARKER_PATH = path.join(PROJECT_TOOLS_DIR, "repo-analysis-tools.json");
+const LOCAL_REFACTORING_MINER_VERSION = "3.1.4";
+const LOCAL_JAVA_FEATURE_VERSION = "21";
 
 const DOC_EXTENSIONS = new Set([".md", ".txt", ".rst", ".adoc"]);
 const SOURCE_EXTENSIONS = new Set([
@@ -139,10 +145,10 @@ export function buildRepositorySubmissionContext(submission, options = {}) {
       : null,
     `- RefactoringMiner required: ${refactoringMinerConfig.required ? "yes" : "no"}`,
     `- RefactoringMiner command: ${
-      refactoringMinerConfig.configuredCommand || "[auto-detect from PATH]"
+      refactoringMinerConfig.configuredCommand || "[auto-detect from setup tools or PATH]"
     }`,
     `- RefactoringMiner Java home: ${
-      refactoringMinerConfig.javaHome || "[Use default java from PATH]"
+      refactoringMinerConfig.javaHome || "[auto-detect setup Java or PATH]"
     }`,
     submission.verification ? `- Verification: ${submission.verification}` : null,
     "",
@@ -178,6 +184,7 @@ function getRefactoringMinerConfig(submission, options) {
   const javaHome = firstNonBlank(
     submission.refactoringMinerJavaHome,
     process.env.REFACTORING_MINER_JAVA_HOME,
+    findLocalJavaHome(),
     process.env.JAVA_HOME,
   );
   const required =
@@ -906,7 +913,7 @@ function detectRefactorings(repoPath, commits, config) {
         ? "RefactoringMiner is required for this repository submission but is not available."
         : "RefactoringMiner is not available; Git-only commit scoring was used.",
       commandResolution.error,
-      "Set REFACTORING_MINER_COMMAND to the RefactoringMiner executable or add RefactoringMiner to PATH.",
+      "Run npm run setup:repo-analysis, set REFACTORING_MINER_COMMAND, or add RefactoringMiner to PATH.",
     ].join(" ");
 
     if (config.required && !config.allowMissingRequired) {
@@ -929,9 +936,13 @@ function detectRefactorings(repoPath, commits, config) {
     );
 
     try {
-      runCommand(commandResolution.command, ["-c", repoPath, commit.sha, "-json", outputPath], {
-        env: buildRefactoringMinerEnv(config.javaHome),
-      });
+      runCommand(
+        commandResolution.command,
+        [...commandResolution.argsPrefix, "-c", repoPath, commit.sha, "-json", outputPath],
+        {
+          env: buildRefactoringMinerEnv(config.javaHome),
+        },
+      );
       const parsed = JSON.parse(fs.readFileSync(outputPath, "utf8"));
       const refactorings = extractRefactorings(parsed);
       results.set(commit.sha, { refactorings });
@@ -948,7 +959,7 @@ function detectRefactorings(repoPath, commits, config) {
 
   results.status = [
     `RefactoringMiner ${config.required ? "required and configured" : "configured"}.`,
-    `Command: ${commandResolution.command}.`,
+    `Command: ${commandResolution.displayCommand}.`,
     `Ran RefactoringMiner on ${commitsToAnalyze.length} recent commits using -c <repo> <commit> -json <file>.`,
     failedCommitCount > 0 ? `Failed RefactoringMiner commits: ${failedCommitCount}.` : null,
   ]
@@ -960,29 +971,123 @@ function detectRefactorings(repoPath, commits, config) {
 function resolveRefactoringMinerCommand(config) {
   const candidates = config.configuredCommand
     ? [config.configuredCommand]
-    : process.platform === "win32"
-      ? ["RefactoringMiner.bat", "RefactoringMiner"]
-      : ["RefactoringMiner"];
+    : [
+        ...getLocalRefactoringMinerCandidates(config.javaHome),
+        ...(process.platform === "win32"
+          ? ["RefactoringMiner.bat", "RefactoringMiner"]
+          : ["RefactoringMiner"]),
+      ];
   const errors = [];
 
-  for (const candidate of candidates) {
-    const command = stripWrappingQuotes(candidate);
+  for (const rawCandidate of candidates) {
+    const candidate = normalizeRefactoringMinerCandidate(rawCandidate);
 
     try {
-      runCommand(command, ["-h"], {
+      runCommand(candidate.command, [...candidate.argsPrefix, "-h"], {
         env: buildRefactoringMinerEnv(config.javaHome),
         maxBuffer: 1024 * 1024,
       });
-      return { command, error: "" };
+      return { ...candidate, error: "" };
     } catch (error) {
-      errors.push(`${command}: ${formatCommandError(error)}`);
+      errors.push(`${candidate.displayCommand}: ${formatCommandError(error)}`);
     }
   }
 
   return {
     command: "",
-    error: `Tried ${candidates.map(stripWrappingQuotes).join(", ")}. ${errors.join(" ")}`,
+    argsPrefix: [],
+    displayCommand: "",
+    error: `Tried ${candidates
+      .map((candidate) => normalizeRefactoringMinerCandidate(candidate).displayCommand)
+      .join(", ")}. ${errors.join(" ")}`,
   };
+}
+
+function normalizeRefactoringMinerCandidate(candidate) {
+  if (typeof candidate === "string") {
+    const command = stripWrappingQuotes(candidate);
+
+    return {
+      command,
+      argsPrefix: [],
+      displayCommand: command,
+    };
+  }
+
+  return {
+    command: stripWrappingQuotes(candidate.command),
+    argsPrefix: Array.isArray(candidate.argsPrefix) ? candidate.argsPrefix : [],
+    displayCommand: candidate.displayCommand || stripWrappingQuotes(candidate.command),
+  };
+}
+
+function getLocalRefactoringMinerCandidates(javaHome) {
+  return getRepositoryAnalysisToolsDirs()
+    .map((toolsDir) => path.join(toolsDir, `RefactoringMiner-${LOCAL_REFACTORING_MINER_VERSION}`))
+    .filter((refactoringMinerHome) =>
+      fs.existsSync(path.join(refactoringMinerHome, "lib", `RefactoringMiner-${LOCAL_REFACTORING_MINER_VERSION}.jar`)),
+    )
+    .map((refactoringMinerHome) => {
+      const classpath = path.join(refactoringMinerHome, "lib", "*");
+      const javaCommand = getJavaExecutable(javaHome);
+
+      return {
+        command: javaCommand,
+        argsPrefix: ["-cp", classpath, "org.refactoringminer.RefactoringMiner"],
+        displayCommand: `${javaCommand} -cp ${classpath} org.refactoringminer.RefactoringMiner`,
+      };
+    });
+}
+
+function getJavaExecutable(javaHome) {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+  const javaHomeCommand = javaHome ? path.join(javaHome, "bin", executable) : "";
+
+  return javaHomeCommand && fs.existsSync(javaHomeCommand) ? javaHomeCommand : "java";
+}
+
+function findLocalJavaHome() {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+
+  for (const toolsDir of getRepositoryAnalysisToolsDirs()) {
+    const javaRoot = path.join(toolsDir, `java-${LOCAL_JAVA_FEATURE_VERSION}`);
+    const command = findFileByName(javaRoot, executable, 5);
+
+    if (command && path.basename(path.dirname(command)) === "bin") {
+      return path.dirname(path.dirname(command));
+    }
+  }
+
+  return "";
+}
+
+function getRepositoryAnalysisToolsDirs() {
+  return unique([
+    process.env.REPOSITORY_ANALYSIS_TOOLS_DIR,
+    readToolsMarker().toolsDir,
+    getDefaultRepositoryAnalysisToolsDir(),
+    PROJECT_TOOLS_DIR,
+  ]).map((toolsDir) => path.resolve(toolsDir));
+}
+
+function readToolsMarker() {
+  if (!fs.existsSync(PROJECT_TOOLS_MARKER_PATH)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(PROJECT_TOOLS_MARKER_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function getDefaultRepositoryAnalysisToolsDir() {
+  if (process.platform === "win32") {
+    return path.join(process.env.PUBLIC || "C:\\Users\\Public", "co-thinker-repo-analysis");
+  }
+
+  return PROJECT_TOOLS_DIR;
 }
 
 function extractRefactorings(parsedOutput) {
@@ -1220,6 +1325,36 @@ function countBy(values) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findFileByName(rootDirectory, fileName, maxDepth) {
+  if (!fs.existsSync(rootDirectory) || maxDepth < 0) {
+    return "";
+  }
+
+  const entries = fs.readdirSync(rootDirectory, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootDirectory, entry.name);
+
+    if (entry.isFile() && entry.name === fileName) {
+      return entryPath;
+    }
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const found = findFileByName(path.join(rootDirectory, entry.name), fileName, maxDepth - 1);
+
+    if (found) {
+      return found;
+    }
+  }
+
+  return "";
 }
 
 function runGit(repoPath, args) {

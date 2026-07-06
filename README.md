@@ -35,7 +35,16 @@ VITE_API_BASE_URL=http://localhost:3000
 
 `VITE_API_BASE_URL` can stay blank if you want the frontend to fall back to `http://localhost:3000` in local development.
 
-4. Start the frontend and backend together:
+4. If you want to test repository-backed assignment reviews, download the local analysis tools:
+
+```bash
+npm run setup:repo-analysis
+```
+
+This downloads pinned local copies of RefactoringMiner and a Java runtime. The generated local marker under `.tools/` is ignored by git.
+On Windows, the actual tools are placed in a short path under `C:\Users\Public\co-thinker-repo-analysis` by default because RefactoringMiner's batch script can fail from long paths. A small marker file is written under `.tools/` so the backend can find that install.
+
+5. Start the frontend and backend together:
 
 ```bash
 npm run dev
@@ -80,9 +89,11 @@ REFACTORING_MINER_REQUIRED=true
 REFACTORING_MINER_MAX_COMMITS=20
 ```
 
-`REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend tries to run `RefactoringMiner.bat` or `RefactoringMiner` from PATH. Repository rows can also set `requireRefactoringMiner: true` in `data/submissions.json`; when required, the voice-call API fails fast if RefactoringMiner is unavailable instead of quietly falling back to Git-only scoring.
+`REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend tries the setup marker/default tools directory first, then `RefactoringMiner.bat` or `RefactoringMiner` from PATH. Repository rows can also set `requireRefactoringMiner: true` in `data/submissions.json`; when required, the voice-call API fails fast if RefactoringMiner is unavailable instead of quietly falling back to Git-only scoring.
 
-Recent RefactoringMiner releases may require a newer Java runtime than the rest of the app. Set `REFACTORING_MINER_JAVA_HOME` to a Java 21 runtime if your system `JAVA_HOME` points at Java 17.
+For the easiest setup, run `npm run setup:repo-analysis`. The backend auto-detects the setup marker under `.tools/`, the default local tools directory, and then PATH. `REFACTORING_MINER_COMMAND` and `REFACTORING_MINER_JAVA_HOME` are still supported as manual overrides.
+
+Recent RefactoringMiner releases may require a newer Java runtime than the rest of the app. Set `REFACTORING_MINER_JAVA_HOME` to a Java 21 runtime if your system `JAVA_HOME` points at an older runtime and you are not using `npm run setup:repo-analysis`.
 
 RefactoringMiner is called with the local-repository commit mode:
 
@@ -110,6 +121,7 @@ The backend does not pass the entire commit history or entire repository to the 
 Preview the exact context without an OpenAI key:
 
 ```bash
+npm run setup:repo-analysis
 npm run inspect:submission -- 2
 ```
 

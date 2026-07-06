@@ -70,6 +70,36 @@ OPENAI_REALTIME_INSTRUCTIONS=You are a concise and helpful voice assistant.
 PORT=3000
 ```
 
+Optional repository-analysis defaults:
+
+```env
+REPOSITORY_ANALYSIS_CACHE_DIR=
+REFACTORING_MINER_COMMAND=
+```
+
+`REFACTORING_MINER_COMMAND` can point to the RefactoringMiner executable, for example `C:\tools\RefactoringMiner\bin\RefactoringMiner.bat` on Windows. If it is blank, the backend still ranks commits using Git churn, file categories, and commit messages; RefactoringMiner signals are simply reported as unavailable.
+
+## Repository Submission Context
+
+Repository-backed sessions are configured in `data/submissions.json` by worksheet row ID. When a row has a submission entry, the backend builds a compact repository context and sends it to the Realtime model as a hidden system message after the call connects.
+
+The context includes:
+
+- assignment and repository metadata
+- instructor review focus from `data/submissions.json`
+- repository analysis status
+- the selected top high-signal commits with reasons, touched files, optional RefactoringMiner output, and trimmed diffs
+- selected final file excerpts with line numbers
+- suggested probing questions for the assistant to adapt during the voice call
+
+The backend does not pass the entire commit history or entire repository to the model. For the example assignment row, `topCommitCount` is `3`, and `ignoreCommitPrefixes` excludes scaffold/documentation/admin commits so the assistant focuses on code the student actually wrote.
+
+Preview the exact context without an OpenAI key:
+
+```bash
+npm run inspect:submission -- 2
+```
+
 ## Current Implementation
 
 - React + TypeScript UI built with Vite

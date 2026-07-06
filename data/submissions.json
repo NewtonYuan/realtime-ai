@@ -5,6 +5,15 @@
     "repoPath": "../Assignment-1-Library-Loan-System",
     "branch": "main",
     "finalCommit": "d6d8c0d",
+    "topCommitCount": 3,
+    "commitAnalysisLimit": 80,
+    "maxDiffCharacters": 9000,
+    "maxFileCharacters": 12000,
+    "ignoreCommitPrefixes": [
+      "18015d6",
+      "65499e6",
+      "d6d8c0d"
+    ],
     "verification": "mvn -q test passed on 2026-06-15.",
     "focus": [
       "Ask about the student's object-oriented design decisions.",

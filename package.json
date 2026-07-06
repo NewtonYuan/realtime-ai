@@ -7,6 +7,7 @@
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite",
     "dev:server": "node --watch server/index.js",
+    "inspect:submission": "node server/inspectSubmissionContext.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

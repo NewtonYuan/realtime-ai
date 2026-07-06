@@ -59,6 +59,41 @@ app.get("/api/respondents/:rowId", (request, response) => {
   });
 });
 
+app.get("/api/respondents/:rowId/review-context", (request, response) => {
+  const rowId = parseRowId(request.params.rowId);
+
+  if (rowId === null) {
+    response.status(400).json({
+      error: "Row ID must be a positive worksheet row number.",
+    });
+    return;
+  }
+
+  const respondent = loadRespondentByRowId(rowId);
+
+  if (!respondent) {
+    response.status(404).json({
+      error: `No response row was found for worksheet row ${rowId}.`,
+    });
+    return;
+  }
+
+  const submission = loadSubmissionByRowId(rowId);
+
+  try {
+    response.json({
+      reviewContext: buildReviewContextPreview({ respondent, submission }),
+    });
+  } catch (error) {
+    response.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to build the review context preview.",
+    });
+  }
+});
+
 app.post("/api/realtime/client-secret", async (request, response) => {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
@@ -466,6 +501,141 @@ function summarizeSubmission(submission) {
     branch: String(submission.branch || "").trim(),
     finalCommit: String(submission.finalCommit || "").trim(),
   };
+}
+
+function buildReviewContextPreview({ respondent, submission }) {
+  if (submission) {
+    return buildRepositoryReviewContextPreview(submission);
+  }
+
+  return buildCodeRunnerReviewContextPreview(respondent);
+}
+
+function buildRepositoryReviewContextPreview(submission) {
+  const contextText = buildRepositorySubmissionContext(submission, {
+    allowMissingRequiredRefactoringMiner: true,
+  });
+  const assignmentTitle =
+    String(submission.assignmentTitle || "").trim() || "Repository assignment";
+  const repositoryName =
+    String(submission.repositoryName || path.basename(submission.repoPath || "")).trim() ||
+    "submission repository";
+  const sections = [
+    {
+      id: "overview",
+      label: "Overview",
+      content:
+        extractContextBefore(contextText, "Selected high-signal commits:") ||
+        contextText,
+    },
+    {
+      id: "commits",
+      label: "Selected Commits",
+      content: extractContextBetween(
+        contextText,
+        "Selected high-signal commits:",
+        "Selected final file evidence:",
+      ),
+    },
+    {
+      id: "code",
+      label: "Code Evidence",
+      content: extractContextBetween(
+        contextText,
+        "Selected final file evidence:",
+        "Suggested probing questions.",
+      ),
+    },
+    {
+      id: "questions",
+      label: "Probing Ideas",
+      content: extractContextFrom(contextText, "Suggested probing questions."),
+    },
+  ].filter((section) => section.content);
+
+  return {
+    mode: "repository",
+    title: assignmentTitle,
+    sourceLabel: `${repositoryName} (${submission.branch || "unknown branch"} @ ${
+      submission.finalCommit || "unknown commit"
+    })`,
+    sections,
+  };
+}
+
+function buildCodeRunnerReviewContextPreview(respondent) {
+  const reviewPairs = buildReviewPairs(respondent);
+  const rowSummary = [
+    `Worksheet row: ${respondent.rowId}`,
+    `Source files: responses.xlsx and questions.txt`,
+    `State: ${respondent.state || "[Unknown]"}`,
+    `Completed: ${respondent.completed || "[Unknown]"}`,
+    `Time taken: ${respondent.timeTaken || "[Unknown]"}`,
+    `Grade: ${respondent.grade || "[Unknown]"}`,
+    `Answered responses: ${respondent.answeredCount}/${respondent.questionCount}`,
+  ].join("\n");
+  const questionPairs = reviewPairs
+    .map(
+      ({ questionNumber, questionText, responseText }) =>
+        [
+          `Question ${questionNumber}`,
+          questionText,
+          "",
+          "Saved student response:",
+          responseText || "[No response recorded]",
+        ].join("\n"),
+    )
+    .join("\n\n---\n\n");
+
+  return {
+    mode: "coderunner",
+    title: `CodeRunner exercise row ${respondent.rowId}`,
+    sourceLabel: "responses.xlsx + questions.txt",
+    sections: [
+      {
+        id: "overview",
+        label: "Overview",
+        content: rowSummary,
+      },
+      {
+        id: "responses",
+        label: "Questions + Responses",
+        content: questionPairs || "[No worksheet responses were loaded.]",
+      },
+      {
+        id: "questions",
+        label: "Question Document",
+        content: loadQuestionDocument() || "[questions.txt could not be loaded]",
+      },
+    ],
+  };
+}
+
+function extractContextBefore(contextText, endMarker) {
+  const endIndex = contextText.indexOf(endMarker);
+
+  return endIndex >= 0 ? contextText.slice(0, endIndex).trim() : "";
+}
+
+function extractContextBetween(contextText, startMarker, endMarker) {
+  const startIndex = contextText.indexOf(startMarker);
+
+  if (startIndex < 0) {
+    return "";
+  }
+
+  const contentStart = startIndex + startMarker.length;
+  const endIndex = contextText.indexOf(endMarker, contentStart);
+
+  return contextText
+    .slice(contentStart, endIndex >= 0 ? endIndex : undefined)
+    .trim();
+}
+
+function extractContextFrom(contextText, startMarker) {
+  const startIndex = contextText.indexOf(startMarker);
+
+  return startIndex >= 0 ? contextText.slice(startIndex).trim() : "";
 }
 
 function resolveConfiguredPath(configuredPath) {

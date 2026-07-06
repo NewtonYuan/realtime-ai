@@ -44,9 +44,12 @@ button {
 
 .app-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  grid-template-columns:
+    minmax(280px, 0.8fr)
+    minmax(360px, 1.2fr)
+    minmax(280px, 0.85fr);
   gap: 24px;
-  width: min(100%, 980px);
+  width: min(100%, 1440px);
 }
 
 .call-card {
@@ -277,6 +280,109 @@ h2 {
   align-self: flex-start;
 }
 
+.context-card {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-width: 0;
+  min-height: 640px;
+}
+
+.context-header {
+  align-items: flex-start;
+}
+
+.context-header h2 {
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+.context-source {
+  margin-top: 10px;
+  color: #cfcfcf;
+  word-break: break-word;
+}
+
+.context-mode {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  max-width: 160px;
+  padding: 8px 10px;
+  border: 1px solid #ffffff;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #111111;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.context-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.context-tab {
+  padding: 8px 10px;
+  border: 1px solid #2a2a2a;
+  border-radius: 999px;
+  color: #cfcfcf;
+  background: #0a0a0a;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.context-tab-active {
+  color: #000000;
+  background: #ffffff;
+  border-color: #ffffff;
+  font-weight: 700;
+}
+
+.context-preview-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  margin-top: 18px;
+  border: 1px solid #2a2a2a;
+  border-radius: 18px;
+  background: #050505;
+  overflow: hidden;
+}
+
+.context-section-title {
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2a2a;
+  color: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.context-preview {
+  min-height: 0;
+  max-height: 510px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  color: #eeeeee;
+  background: #050505;
+  font-family:
+    "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.context-empty {
+  margin-top: 24px;
+  color: #cfcfcf;
+}
+
 .transcript-card {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -358,6 +464,18 @@ h2 {
   color: #ffffff;
 }
 
+@media (max-width: 1180px) {
+  .app-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: min(100%, 980px);
+  }
+
+  .context-card {
+    grid-column: 1 / -1;
+    min-height: 560px;
+  }
+}
+
 @media (max-width: 640px) {
   .call-card {
     padding: 24px;
@@ -376,5 +494,17 @@ h2 {
 
   .transcript-card {
     min-height: auto;
+  }
+
+  .context-card {
+    min-height: auto;
+  }
+
+  .context-preview {
+    max-height: 420px;
+  }
+
+  .context-mode {
+    max-width: 100%;
   }
 }

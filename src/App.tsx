@@ -57,6 +57,19 @@ type RespondentContext = {
   } | null;
 };
 
+type ReviewContextSection = {
+  id: string;
+  label: string;
+  content: string;
+};
+
+type ReviewContextPreview = {
+  mode: "repository" | "coderunner";
+  title: string;
+  sourceLabel: string;
+  sections: ReviewContextSection[];
+};
+
 function App() {
   const [status, setStatus] = useState<VoiceCallStatus>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -70,6 +83,10 @@ function App() {
   const [respondent, setRespondent] = useState<RespondentContext | null>(null);
   const [isLoadingRespondent, setIsLoadingRespondent] = useState(false);
   const [respondentError, setRespondentError] = useState<string | null>(null);
+  const [reviewContext, setReviewContext] = useState<ReviewContextPreview | null>(null);
+  const [activeContextSectionId, setActiveContextSectionId] = useState("");
+  const [isLoadingReviewContext, setIsLoadingReviewContext] = useState(false);
+  const [reviewContextError, setReviewContextError] = useState<string | null>(null);
 
   const isConnected = status === "connected";
   const canStartCall = Boolean(respondent) && !isConnected && !isBusy;
@@ -178,10 +195,44 @@ function App() {
     setTranscriptItems((currentItems) => [...currentItems, item]);
   }
 
+  async function loadReviewContext(rowId: number) {
+    setIsLoadingReviewContext(true);
+    setReviewContextError(null);
+    setReviewContext(null);
+    setActiveContextSectionId("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/respondents/${rowId}/review-context`);
+      const payload = (await response.json()) as
+        | { reviewContext: ReviewContextPreview }
+        | { error?: string };
+
+      if (!response.ok || !("reviewContext" in payload) || !payload.reviewContext) {
+        throw new Error(
+          "error" in payload && payload.error
+            ? payload.error
+            : "Unable to load the review context.",
+        );
+      }
+
+      setReviewContext(payload.reviewContext);
+      setActiveContextSectionId(payload.reviewContext.sections[0]?.id ?? "");
+    } catch (contextError) {
+      setReviewContextError(
+        contextError instanceof Error
+          ? contextError.message
+          : "Unable to load the review context.",
+      );
+    } finally {
+      setIsLoadingReviewContext(false);
+    }
+  }
+
   async function handleLoadRespondent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setRespondentError(null);
     setError(null);
+    setReviewContextError(null);
     setIsLoadingRespondent(true);
 
     try {
@@ -201,6 +252,7 @@ function App() {
       }
 
       setRespondent(payload.respondent);
+      void loadReviewContext(payload.respondent.rowId);
       setTranscriptItems([
         {
           id: `system-respondent-${payload.respondent.rowId}`,
@@ -213,6 +265,8 @@ function App() {
       ]);
     } catch (loadError) {
       setRespondent(null);
+      setReviewContext(null);
+      setActiveContextSectionId("");
       setRespondentError(
         loadError instanceof Error
           ? loadError.message
@@ -229,6 +283,9 @@ function App() {
     }
 
     setRespondent(null);
+    setReviewContext(null);
+    setActiveContextSectionId("");
+    setReviewContextError(null);
     setRowIdInput("");
     setRespondentError(null);
     setError(null);
@@ -454,6 +511,14 @@ function App() {
 
           </div>
 
+          <ReviewContextPanel
+            activeSectionId={activeContextSectionId}
+            error={reviewContextError}
+            isLoading={isLoadingReviewContext}
+            onSectionChange={setActiveContextSectionId}
+            reviewContext={reviewContext}
+          />
+
           <aside className="call-card transcript-card">
             <div className="card-header transcript-header">
               <div>
@@ -487,6 +552,84 @@ function App() {
         </section>
       )}
     </main>
+  );
+}
+
+function ReviewContextPanel({
+  activeSectionId,
+  error,
+  isLoading,
+  onSectionChange,
+  reviewContext,
+}: {
+  activeSectionId: string;
+  error: string | null;
+  isLoading: boolean;
+  onSectionChange: (sectionId: string) => void;
+  reviewContext: ReviewContextPreview | null;
+}) {
+  const activeSection =
+    reviewContext?.sections.find((section) => section.id === activeSectionId) ??
+    reviewContext?.sections[0] ??
+    null;
+  const modeLabel =
+    reviewContext?.mode === "repository" ? "Repository Assignment" : "CodeRunner Exercise";
+
+  return (
+    <aside className="call-card context-card">
+      <div className="card-header context-header">
+        <div>
+          <p className="eyebrow">Review Context</p>
+          <h2>{reviewContext?.title || "Loading context"}</h2>
+          {reviewContext ? (
+            <p className="supporting-text context-source">{reviewContext.sourceLabel}</p>
+          ) : null}
+        </div>
+        {reviewContext ? (
+          <span className={`context-mode context-mode-${reviewContext.mode}`}>
+            {modeLabel}
+          </span>
+        ) : null}
+      </div>
+
+      {isLoading ? (
+        <div className="feedback loading">Loading the evidence the AI will use...</div>
+      ) : null}
+
+      {error ? <div className="feedback error">{error}</div> : null}
+
+      {!isLoading && !error && !reviewContext ? (
+        <div className="context-empty">Load a worksheet row to preview the AI context.</div>
+      ) : null}
+
+      {reviewContext ? (
+        <>
+          <div className="context-tabs" role="tablist" aria-label="Review context sections">
+            {reviewContext.sections.map((section) => (
+              <button
+                aria-selected={section.id === activeSection?.id}
+                className={`context-tab ${
+                  section.id === activeSection?.id ? "context-tab-active" : ""
+                }`}
+                key={section.id}
+                onClick={() => onSectionChange(section.id)}
+                role="tab"
+                type="button"
+              >
+                {section.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="context-preview-shell">
+            <div className="context-section-title">
+              {activeSection?.label || "Context"}
+            </div>
+            <pre className="context-preview">{activeSection?.content || "[No content]"}</pre>
+          </div>
+        </>
+      ) : null}
+    </aside>
   );
 }
 

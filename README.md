@@ -99,11 +99,13 @@ The context includes:
 - assignment and repository metadata
 - instructor review focus from `data/submissions.json`
 - repository analysis status
-- the selected top high-signal commits with reasons, touched files, RefactoringMiner output, and trimmed diffs
+- the selected top high-signal commits with semantic reasons, touched files, RefactoringMiner output, and trimmed diffs
+- semantic signals for each selected commit, such as new classes, public methods, state fields, tests, validation branches, parser changes, and detected refactorings
+- pedagogical angles and suggested question directions derived from those signals
 - selected final file excerpts with line numbers
 - suggested probing questions for the assistant to adapt during the voice call
 
-The backend does not pass the entire commit history or entire repository to the model. For the example assignment row, `topCommitCount` is `3`, `requireRefactoringMiner` is `true`, and `ignoreCommitPrefixes` excludes scaffold/documentation/admin commits so the assistant focuses on code the student actually wrote.
+The backend does not pass the entire commit history or entire repository to the model. For the example assignment row, `topCommitCount` is `3`, `requireRefactoringMiner` is `true`, and `ignoreCommitPrefixes` excludes scaffold/documentation/admin commits so the assistant focuses on code the student actually wrote. Commit selection is semantic-first: program-structure evidence and RefactoringMiner output drive the score, while changed line counts are kept as supporting tie-breakers only.
 
 Preview the exact context without an OpenAI key:
 
